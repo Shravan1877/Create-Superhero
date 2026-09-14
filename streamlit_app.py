@@ -21,6 +21,8 @@ from scoring.parse_submission import ParseError, parse_submission
 
 st.set_page_config(page_title="Battle of New York — Scoring", layout="wide")
 
+NIL_UUID = "00000000-0000-0000-0000-000000000000"
+
 
 @st.cache_resource
 def get_client():
@@ -94,11 +96,37 @@ def build_leaderboard_rows(scored_sorted):
 def replace_leaderboard(client, rows):
     """Delete-then-insert, always (CLAUDE.md L21) -- never append, so a
     scoring run can never leave a mixed-generation leaderboard on screen."""
-    client.table("leaderboard").delete().neq(
-        "id", "00000000-0000-0000-0000-000000000000"
-    ).execute()
+    client.table("leaderboard").delete().neq("id", NIL_UUID).execute()
     if rows:
         client.table("leaderboard").insert(rows).execute()
+
+
+def clear_database(client):
+    """Admin-only, pre-event reset. Wipes both tables using the same
+    delete-then-neq-nil pattern as replace_leaderboard -- no second
+    deletion mechanism, no raw SQL."""
+    client.table("submissions").delete().neq("id", NIL_UUID).execute()
+    client.table("leaderboard").delete().neq("id", NIL_UUID).execute()
+
+
+@st.dialog("Clear Database")
+def confirm_clear_database(client):
+    st.warning(
+        "Are you sure? This will DELETE all rows in `submissions` AND "
+        "`leaderboard` tables."
+    )
+    col1, col2 = st.columns(2)
+    if col1.button("Yes, delete everything", type="primary", use_container_width=True):
+        try:
+            clear_database(client)
+            st.session_state["clear_db_status"] = ("success", "Tables cleared ✓")
+        except Exception as e:
+            st.session_state["clear_db_status"] = ("error", f"Failed to clear tables: {e}")
+        st.session_state["show_clear_confirm"] = False
+        st.rerun()
+    if col2.button("Cancel", use_container_width=True):
+        st.session_state["show_clear_confirm"] = False
+        st.rerun()
 
 
 def display_table(scored_sorted):
@@ -118,14 +146,27 @@ def display_table(scored_sorted):
     st.dataframe(pd.DataFrame(display_rows), use_container_width=True, hide_index=True)
 
 
+client = get_client()
+
+with st.sidebar.expander("⚠️ Admin Controls", expanded=False):
+    st.caption("Destructive. Use before the event or between test runs only.")
+    if st.button("Clear Database"):
+        st.session_state["show_clear_confirm"] = True
+
+    if st.session_state.get("show_clear_confirm"):
+        confirm_clear_database(client)
+
+    status = st.session_state.pop("clear_db_status", None)
+    if status:
+        kind, msg = status
+        (st.success if kind == "success" else st.error)(msg)
+
 st.title("Build Your Hero — Scoring Console")
 st.caption(
     "Stage 3 fallback display (CLAUDE.md §2). This view never depends on the "
     "Cloudflare Pages leaderboard, Realtime, or custom styling -- it's the one "
     "that has to work no matter what."
 )
-
-client = get_client()
 
 run = st.button("Run Scoring", type="primary")
 
