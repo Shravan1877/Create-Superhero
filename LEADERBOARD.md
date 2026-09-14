@@ -57,6 +57,15 @@ Three vertical "medals" displayed at different heights, arranged left-center-rig
 | **Center (1st place)** | 200px | Top: -20px (lifts above line) | Gold medal `#FCD34D` |
 | **Right (3rd place)** | 140px | 0 | Bronze medal `#FED7AA` |
 
+> **As shipped:** these heights apply to a colored riser/pedestal *beneath*
+> each card (with the rank number on it, like an Olympic podium block), not
+> to the whole card. The rich content in §3.2 (medal + name + score + 5 gate
+> lines + player name) genuinely needs more than 140-200px — forcing it into
+> a fixed box of that height caused real overflow/overlap (worst on mobile).
+> Card content is consistent height across all three ranks; the riser below
+> it carries the 200:165:140 step effect instead. Rank 1's `-20px` lift is
+> applied to the whole card+riser unit via a small negative top margin.
+
 ### 3.2 Each Medal Card Contains
 
 ```
@@ -243,26 +252,45 @@ Before Realtime connects:
 | **Tablet** (`640px–1024px`) | Single column | Podium medals slightly larger, rows use card-style containers |
 | **Desktop** (`≥1024px`) | Full grid | Standard grid layout, podium medals at full size |
 
+> **As shipped:** "small, tight" on mobile also means the podium card's
+> per-gate breakdown list (5 lines) is hidden below the `sm:` breakpoint —
+> only the "Gates: X/5" summary line shows. With it visible at mobile width,
+> three cards' worth of content genuinely didn't fit without overlap;
+> hiding it there and keeping the fraction was the fix.
+
 ---
 
 ## 9. Tech Stack & Interactivity
 
-### 9.1 Framework & Libraries
+### 9.1 Framework & Libraries — as actually shipped
 
-- **React** (or Next.js if SSR is needed)
-- **Framer Motion** (for podium/list animations, spring physics)
-- **Supabase JS client** (Realtime subscription)
-- **Tailwind CSS** (responsive grid, spacing, shadows)
-- **Phosphor Icons** or **Radix Icons** (no emojis — use proper SVG icons for medal, gate checkmarks, etc.)
+Built as `leaderboard/index.html`, a single static file with **zero npm
+install and zero bundler**, matching CLAUDE.md's Stage 4 deploy constraint
+(see its "Revision note (framework choice)" in §2):
 
-### 9.2 Key Components
+- **React 18 + Framer Motion + Phosphor Icons + Supabase JS** loaded as ESM
+  directly from `esm.sh`, wired together with a `<script type="importmap">`
+  so every package resolves to one shared React instance
+- **JSX authored normally**, transformed in the browser via **Babel
+  Standalone** (`data-type="module"` so `import`/`export` still work) —
+  this is what makes "no build step" and "real JSX" both true at once
+- **Tailwind CSS** via the `cdn.tailwindcss.com` play build (JIT, no
+  PostCSS step)
+- Drag-and-drop deploy: point Cloudflare Pages at the `leaderboard/` folder
 
-1. **PodiumSection** — Renders top 3, entrance animations, medal spin
-2. **LeaderboardList** — Renders rows 4–20 with staggered entrance and real-time updates
-3. **Header** — Title, subtitle, live pulse indicator
-4. **LiveSubscription** (hook) — Manages Realtime connection, re-orders data on change
+### 9.2 Key Components (as actually shipped)
+
+All in the one file, not separate component files (see §16):
+`Header`/`LiveBadge`, `PodiumSection`/`PodiumCard`/`GateRow`,
+`LeaderboardList`/`ListRow`/`GateIcons`, `useLeaderboardData` (the Realtime
+hook — debounces to one refetch per DB change burst, since Stage 3 replaces
+the whole table on every scoring run), `useCountUp`, `ConfettiBurst`.
 
 ### 9.3 Data Structure (from Supabase leaderboard table)
+
+`gate_detail`'s keys are **not** the shorthand originally sketched here —
+they're the real gate keys from `scoring/data.py`'s `GATES` list, since
+that's what Stage 3 actually writes:
 
 ```json
 {
@@ -272,7 +300,13 @@ Before Realtime connects:
   "hero_name": "Ironclad Surge",
   "total_score": 2450,
   "gates_passed": 5,
-  "gate_detail": { "reach": true, "crossing": true, "weakness": true, "leviathan": true, "swarm": true },
+  "gate_detail": {
+    "reach_portal": true,
+    "survive_crossing": true,
+    "find_weakness": true,
+    "crack_leviathan": true,
+    "survive_swarm": true
+  },
   "scored_at": "2026-09-15T18:45:00Z"
 }
 ```
@@ -358,37 +392,54 @@ Before Realtime connects:
 
 ## 15. Success Criteria
 
-- [ ] Podium renders with correct rank heights (200px, 165px, 140px)
-- [ ] Top 3 medals display with spring entrance, staggered by 100ms
+Checked = actually verified in headless Chromium against production Supabase
+data, not just implemented. See CLAUDE.md §9 test log for how.
+
+- [x] Podium renders with correct rank heights — as a riser below the card,
+  not the card itself (see §3.1 note); screenshotted at desktop + mobile
+- [x] Top 3 medals display with spring entrance, staggered by 100ms (code:
+  `delay: index * 0.1`; visually confirmed, not frame-measured)
 - [ ] Leaderboard list scrolls smoothly with row entrance animations
-- [ ] Score numbers animate from 0 to final on load
-- [ ] Gate icons render correctly (✓ green, ✗ red) and fade in sequentially
-- [ ] Supabase Realtime subscription updates podium and list live
-- [ ] Mobile layout collapses to single column, podium adapts
-- [ ] Hover states work on desktop, no janky repaints
-- [ ] Loading skeleton appears before data loads
-- [ ] Empty state displays if no submissions
-- [ ] Animations respect `prefers-reduced-motion`
-- [ ] Accessibility: ARIA labels, keyboard nav, 4.5:1 color contrast
+  (staggered entrance implemented and rendered with zero console errors;
+  scroll smoothness itself wasn't separately profiled)
+- [x] Score numbers animate from 0 to final on load, and old → new on
+  update — confirmed live: DB score change propagated and counted up with
+  no reload
+- [x] Gate icons render correctly (✓ green, ✗ red) — confirmed via
+  screenshot; sequential fade-in implemented, not frame-isolated
+- [x] Supabase Realtime subscription updates podium and list live —
+  confirmed with a real Postgres UPDATE while the page was open
+- [x] Mobile layout collapses to single column, podium adapts — this is
+  where the height-overflow bug was actually caught; fixed and re-verified
+- [ ] Hover states work on desktop, no janky repaints (implemented via
+  Tailwind `hover:`; not interactively tested with a real pointer)
+- [x] Loading skeleton appears before data loads
+- [x] Empty state displays if no submissions (verified before the retune
+  session added test data; not re-verified after, but nothing touched that
+  code path)
+- [x] Animations respect `prefers-reduced-motion` — tested with motion
+  emulated to `reduce`, zero console errors
+- [ ] Accessibility: ARIA labels and keyboard-focusable rows are in the
+  code (`role`, `tabIndex`, `focus-visible:ring-accent`); not verified with
+  an actual screen reader or a contrast-ratio tool
 
 ---
 
-## 16. File Structure (for Claude Code)
+## 16. File Structure — as actually shipped
 
 ```
 leaderboard/
-├── index.html (or .jsx/.tsx)
-├── styles.css (Tailwind or inline)
-├── components/
-│   ├── PodiumSection.jsx
-│   ├── LeaderboardList.jsx
-│   ├── Header.jsx
-│   └── LiveSubscription.js (Realtime hook)
-├── hooks/
-│   └── useLeaderboardSubscription.js
-└── utils/
-    └── animations.js (Framer Motion configs)
+└── index.html   # everything: markup, Tailwind config, keyframes, all
+                  # components, the Realtime hook -- inline in one file
 ```
+
+Not split into `components/`/`hooks/`/`utils/` as originally sketched here.
+With Babel Standalone doing the JSX transform in-browser (no bundler), there
+was no import graph to speak of — separate files would have meant either a
+handful of extra `<script type="text/babel">` tags evaluated in sequence
+(fragile load-order dependencies) or reaching for a bundler, which defeats
+the "no build step, drag-and-drop deploy" point in the first place. One file
+was the simpler choice that actually satisfies CLAUDE.md's Stage 4 intent.
 
 ---
 

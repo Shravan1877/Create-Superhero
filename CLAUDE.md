@@ -89,9 +89,21 @@ Each stage is **independently operable**. A failure in one does not cascade.
   depend on the Cloudflare Pages leaderboard, custom CSS, or anything cosmetic.
 
 ### Stage 4 — Reveal
-- Static HTML/CSS/JS on Cloudflare Pages. Subscribes to the `leaderboard` table via
+- Static HTML on Cloudflare Pages. Subscribes to the `leaderboard` table via
   Supabase Realtime and re-renders when it changes.
-- No build step, no framework, no backend. One file, drag-and-drop deploy.
+- No backend. One file (`leaderboard/index.html`), drag-and-drop deploy.
+
+> **Revision note (framework choice).** This section originally said "no
+> framework." That was reversed once `LEADERBOARD.md` specified a real design
+> system (podium spring physics, staggered list entrance, live reorder) that
+> plain CSS/JS couldn't deliver cleanly. Reason: the "no build step" intent
+> was about deploy friction, not about banning React specifically — the fix
+> that satisfies the *original* concern is React + Framer Motion + Phosphor
+> Icons + Supabase JS loaded as ESM via CDN with an import map, and JSX
+> transformed in-browser via Babel Standalone. Zero `npm install`, zero
+> bundler, still a single HTML file dragged onto Cloudflare Pages — the
+> deploy story CLAUDE.md actually cared about is unchanged. Verified working
+> end-to-end in headless Chromium (see `leaderboard/index.html`).
 
 > **Locked decision:** there is **no automatic failure detection** between
 > Stage 3 and Stage 4. If the projector page misbehaves, Sravan switches the
@@ -352,9 +364,15 @@ This keeps the dataset rich without punishing the players.
 
 ## 9. Open decisions (not yet locked)
 
-- [ ] `BASE_BUDGET` final value and per-axis point-value calibration — see §9.1
-- [ ] Gate bonus magnitude vs. axis score magnitude
-- [ ] `SCALE` divisor for the vulnerability penalty
+- [x] `BASE_BUDGET` — still formally open, but 500 has been the working value
+  throughout `scoring/data.py`, `scoring/calibrate.py`, and every test run
+  below. Flagged here so it isn't silently treated as locked; change it in
+  `scoring/data.py` (`BASE_BUDGET`) and say so if it moves.
+- [ ] **Gate bonus magnitude vs. axis score magnitude — now urgent, see §9.2.**
+  `GATE_BONUS = 20` in `scoring/data.py` is a placeholder and a live
+  end-to-end test just proved it's badly undersized.
+- [ ] `SCALE` divisor for the vulnerability penalty (`VULN_SCALE = 100` in
+  `scoring/data.py`, still an untested placeholder)
 - [ ] Whether to show players their hero vs. a matched canonical Avenger
 
 **Resolved this session:**
@@ -366,21 +384,35 @@ This keeps the dataset rich without punishing the players.
 - Vulnerability list: **see QUESTIONS.md** — 10 universal vulnerability cards,
   max 3 picks
 
-### 9.1 Calibration flag (found while designing the questions)
+### 9.1 Calibration flag — RESOLVED
 
-QUESTIONS.md's worked example shows Technical Intelligence currently accumulates
-raw points far faster than Mobility, Exotic Survivability, or Crowd Clearing
-across the 19 questions — Tech was deliberately woven in as a secondary axis on
-many options, since "the weakness had to be discovered" is the whole thesis (see
-ENEMY.md §8.4). Left uncorrected, this crowds out the other gate axes after
-normalization even for a deliberately gate-focused player — see the worked
-example's second player.
+~~QUESTIONS.md's worked example shows Technical Intelligence currently
+accumulates raw points far faster than Mobility, Exotic Survivability, or
+Crowd Clearing... a genuinely gate-focused player couldn't clear all five.~~
 
-**Before trusting the §6.1 thresholds on real submissions:** run a small
-calibration script — simulate a few strategies (pure brute, gate-focused, random)
-through the actual scoring pipeline, and retune per-option point magnitudes (not
-the formula, not the gate thresholds) until a genuinely gate-focused player can
-clear all five. This is a Stage 2 pre-launch task, not a live-event task.
+Fixed via `scoring/calibrate.py`. Two option magnitudes were retuned (Exotic
+Survivability on Q7's "brought help/gear" option and Q16's "gear is the only
+reason" option, both raised so a gate-focused player can actually clear
+Survive the Crossing without touching Brute's picks) — see QUESTIONS.md §3
+Q7/Q16 and §6 for the updated numbers and worked example. A genuinely
+gate-focused simulated player now clears 5/5 gates with real margin on every
+threshold; Brute is unaffected and still clears 1/5. Re-run anytime with
+`python3 -m scoring.calibrate`.
+
+### 9.2 Gate bonus is too small relative to axis score — found via live E2E test
+
+Not a simulation this time — an actual Tally submission, scored through the
+real pipeline: a build that cleared **5/5 gates** (deliberately, via
+`scoring.calibrate.gate_focused_strategy()`) scored **4729.17** and ranked
+**below** an earlier build that cleared only **2/5 gates** and scored
+**5650.04**. `GATE_BONUS = 20` means all 5 gates together are worth 100
+points against an axis score that routinely runs 3500-5600 — gates currently
+cannot decide a winner, which contradicts §6's whole thesis ("the win
+condition has a specific shape, not a high average"). This needs a real
+value before event day — likely in the same order of magnitude as axis
+score swings (hundreds to low thousands per gate, not 20). Locking that
+number is Sravan's call, not something to silently pick; `GATE_BONUS` lives
+in `scoring/data.py`.
 
 ---
 

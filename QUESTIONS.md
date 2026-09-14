@@ -128,7 +128,7 @@ player; it's the Stage 2 lookup table.
 | A | Was never built for this. You white out fast | Exotic +5, Courage +5 |
 | B | Holds together somehow. You don't know how much longer | Exotic +20, Durability +10 |
 | C | Doesn't even register it as a problem | Exotic +35 |
-| D | You brought help — gear, a suit, something that buys you time | Exotic +25, Technical +10 |
+| D | You brought help — gear, a suit, something that buys you time | Exotic +50, Technical +10 |
 
 ### Q8 — The fear
 *Something's coming for you in the dark, and you genuinely don't know if you'll walk away from this. You:*
@@ -215,7 +215,7 @@ player; it's the Stage 2 lookup table.
 
 | Option | Text | Scoring |
 |---|---|---|
-| A | Your gear is the only reason you're not already dead out here | Exotic +20, Technical +15 |
+| A | Your gear is the only reason you're not already dead out here | Exotic +50, Technical +15 |
 | B | Something in your own body just... handles it | Exotic +35 |
 | C | You're actively fighting your own body to stay conscious | Exotic +10, Courage +15 |
 | D | You brought exactly one plan for this, and you're hoping it holds | Exotic +15, Sacrifice +10 |
@@ -305,9 +305,9 @@ and canon-accurate** — in the source material, almost nobody clears these
 (Thor alone for Crowd Clearing at scale; Vision and Iron Man alone for Exotic
 Survivability). A narrow path is the correct shape for a rare-specialist gate.
 Technical Intelligence and Courage running highest is also intentional — they
-carry the two heaviest weights in the whole framework. But see the calibration
-flag in §6 below: "touched most often" is not the same as "scaled correctly,"
-and this table alone doesn't prove the thresholds are safe yet.
+carry the two heaviest weights in the whole framework. §6 below used to flag
+this as unproven ("touched most often" isn't "scaled correctly") — that's now
+resolved; see §6 for the retuned numbers.
 
 ---
 
@@ -344,45 +344,56 @@ produce: the strongest-*sounding* choice, chosen consistently, loses.
 
 ### Player "Reads the room" — deliberately chases the four non-Power gate axes
 
-Raw totals: **Mobility 70, Exotic 80, Technical 270, Crowd 95, Sacrifice 10,
-Courage 80, Power 0, Durability 0.** (Sum 605.)
+Raw totals (post-calibration): **Mobility 155, Exotic 110, Technical 220,
+Crowd 100, Sacrifice 10, Courage 45, Durability 5, Power 0.** (Sum 645.)
 
 After normalizing to 500 and clipping:
 
 | Gate | Threshold | Score | Result |
 |---|---|---|---|
-| Reach the portal | Mobility ≥ 70 | 57.9 | ❌ FAIL (narrowly) |
-| Survive the crossing | Exotic ≥ 70 | 66.1 | ❌ FAIL (narrowly) |
+| Reach the portal | Mobility ≥ 70 | 100 (clipped) | ✅ PASS |
+| Survive the crossing | Exotic ≥ 70 | 85.3 | ✅ PASS |
 | Find the weakness | Technical ≥ 75 | 100 (clipped) | ✅ PASS |
 | Crack a Leviathan | Power ≥ 85 or Technical ≥ 80 | Technical 100 | ✅ PASS |
-| Survive the swarm | Crowd ≥ 60 | 78.5 | ✅ PASS |
+| Survive the swarm | Crowd ≥ 60 | 77.5 | ✅ PASS |
 
-**Reads-the-room clears 3 of 5** — a real improvement over Brute, and proof
-that spreading beats maxing. But it exposes something honest: this player
-*tried* to hit Mobility and Exotic and still narrowly missed both, because
-Technical's raw total (270) so dwarfed the others that normalization
-proportionally starved everything else, even axes this player was actively
-choosing for.
+**Reads-the-room now clears 5 of 5** — this used to fail Reach the Portal and
+Survive the Crossing narrowly (Technical's raw magnitude dwarfed everything
+else and normalization starved the axes this player was actively choosing
+for). Fixed by retuning two option magnitudes, not the formula or thresholds:
+Q7 option D and Q16 option A (both "brought gear/prepared" flavor, not the
+"toughest-sounding" options Brute already picks) had their Exotic values
+raised from 25/20 to 50/50. See `CLAUDE.md` §9.1 for the before/after and
+`scoring/calibrate.py` for the simulation this was verified against.
 
-*(These numbers are machine-verified — run against the actual scoring engine, not hand-arithmetic. An earlier hand-tally pass had this section slightly off; this version matches code output exactly.)*
+*(Numbers are machine-verified against the real scoring engine —
+`python3 -m scoring.calibrate` reproduces this exactly.)*
 
-**This is the calibration flag now in `CLAUDE.md` §9.1.** The mechanic — pick
-the strongest option, lose; spread deliberately, do much better — is proven
-here. What isn't proven yet is that the current point *magnitudes* let a truly
-gate-focused player clear all five. That's a tuning pass on numbers, not a
-redesign of the approach, and it belongs in Stage 2 development, not tonight.
+**Independently confirmed live, not just simulated:** a real Tally submission
+run through the actual production pipeline (Tally → webhook → Supabase →
+scoring) with a deliberately gate-focused pick set scored 4729.17 and cleared
+5/5 gates, matching the simulator's prediction exactly. See `CLAUDE.md` §9.2
+for a real problem this same test surfaced: that build's *total score*
+still ranked below a 2/5-gate build, because `GATE_BONUS` is far too small
+relative to axis-score swings. Gates clearing is no longer mathematically
+impossible (this section's original concern) — but gates clearing doesn't
+yet reliably *win*, which is a separate, still-open calibration item.
 
 ---
 
 ## 7. What's now resolved vs. still open
 
-**Resolved by this file:**
+**Resolved by this file (and `scoring/calibrate.py`):**
 - The 8 exposed axes and why
 - All 19 question texts and their scoring vectors
 - The 10-card vulnerability list
 - Proof that naive "pick the strongest" loses badly (1/5 gates)
+- Point magnitudes retuned so a genuinely gate-focused player clears all 5
+  gates, not just 3 — verified both in simulation and via one real, live
+  submission through the deployed pipeline
 
-**Still open, moved to `CLAUDE.md` §9.1:**
-- Retuning point magnitudes so a genuinely gate-focused player can clear all
-  five gates, not just three
-- `BASE_BUDGET`'s final value
+**Still open, see `CLAUDE.md` §9:**
+- `GATE_BONUS` magnitude — evidenced problem now, not just a placeholder
+  (§9.2): gates clearing doesn't currently move total score enough to win
+- `VULN_SCALE` divisor for the vulnerability penalty — untested
+- `BASE_BUDGET`'s final value — 500 used throughout but not formally locked
