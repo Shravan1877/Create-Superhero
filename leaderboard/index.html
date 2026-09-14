@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Chitauri Leaderboard</title>
+<meta name="description" content="Live leaderboard for the Battle of New York superhero builder." />
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        fontFamily: { sans: ['Manrope', 'ui-sans-serif', 'system-ui', 'sans-serif'] },
+        colors: {
+          accent: '#E23636',
+          accentDark: '#DC2626',
+          brandBlue: '#1560D4',
+          ink: '#14141A',
+          inkMuted: '#6B7280',
+          surface: '#FFFFFF',
+          surfaceMuted: '#F8F9FA',
+          success: '#10B981',
+          danger: '#EF4444',
+          hairline: '#E5E7EB',
+          gold: '#FCD34D',
+          silver: '#C7D2FE',
+          bronze: '#FED7AA',
+        },
+        boxShadow: {
+          sm: '0 1px 2px rgba(0,0,0,0.05)',
+          md: '0 4px 6px rgba(0,0,0,0.1)',
+          lg: '0 10px 15px rgba(0,0,0,0.1)',
+        },
+      },
+    },
+  };
+</script>
+
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.3.1",
+    "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
+    "react/jsx-dev-runtime": "https://esm.sh/react@18.3.1/jsx-dev-runtime",
+    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+    "framer-motion": "https://esm.sh/framer-motion@11.15.0?external=react,react-dom",
+    "@phosphor-icons/react": "https://esm.sh/@phosphor-icons/react@2.1.7?external=react,react-dom",
+    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.45.4"
+  }
+}
+</script>
+
+<style>
+  html { background: #FFFFFF; }
+  body { margin: 0; font-family: 'Manrope', ui-sans-serif, system-ui, sans-serif; color: #14141A; background: #FFFFFF; }
+
+  @keyframes shimmer {
+    0% { background-position: -400px 0; }
+    100% { background-position: 400px 0; }
+  }
+  .skeleton {
+    background: linear-gradient(90deg, #F0F1F3 25%, #E9EAED 37%, #F0F1F3 63%);
+    background-size: 800px 100%;
+    animation: shimmer 1.6s linear infinite;
+  }
+
+  @keyframes confetti-fall {
+    0% { transform: translateY(-10vh) rotate(0deg); opacity: 1; }
+    100% { transform: translateY(110vh) rotate(540deg); opacity: 0; }
+  }
+  .confetti-piece { animation: confetti-fall linear forwards; }
+
+  @keyframes live-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  .live-dot { animation: live-pulse 2s infinite; }
+
+  @keyframes score-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.8; }
+  }
+  .score-pulsing { animation: score-pulse 2s infinite; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .skeleton, .confetti-piece, .live-dot, .score-pulsing {
+      animation: none !important;
+    }
+  }
+
+  ::selection { background: #E23636; color: #FFFFFF; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<!-- In-browser JSX transform -- keeps this a single static file with zero
+     build step, per CLAUDE.md's Stage 4 constraint and LEADERBOARD.md §13. -->
+<script src="https://unpkg.com/@babel/standalone@7.26.2/babel.min.js"></script>
+<script type="text/babel" data-type="module" data-presets="react">
+import React from "react";
+import { createRoot } from "react-dom/client";
+import {
+  motion,
+  AnimatePresence,
+  useReducedMotion,
+  useAnimationControls,
+} from "framer-motion";
+import {
+  Trophy,
+  Medal,
+  CheckCircle,
+  XCircle,
+  Rocket,
+  WarningCircle,
+} from "@phosphor-icons/react";
+import { createClient } from "@supabase/supabase-js";
+
+// -- Supabase config ---------------------------------------------------
+// Read-only anon key on the `leaderboard` table (CLAUDE.md §3.3 / L6) --
+// safe to ship in client JS, cannot read `submissions`, cannot write anything.
+const SUPABASE_URL = "https://zkcjskedmydfadscjgov.supabase.co";
+const SUPABASE_ANON_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InprY2pza2VkbXlkZmFkc2NqZ292Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkyOTM1NDEsImV4cCI6MjEwNDg2OTU0MX0.j9dpQYv_ri5N7z4ry6Mw0sWOhQ073chCfCrep8-BdXE";
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// -- Gate schema ---------------------------------------------------------
+// Matches scoring/data.py GATES exactly -- these are the real keys the
+// Stage 3 Streamlit app writes into leaderboard.gate_detail.
+const GATES = [
+  { key: "reach_portal", short: "Reach portal" },
+  { key: "survive_crossing", short: "Survive crossing" },
+  { key: "find_weakness", short: "Find weakness" },
+  { key: "crack_leviathan", short: "Crack Leviathan" },
+  { key: "survive_swarm", short: "Survive swarm" },
+];
+
+const MEDAL = {
+  1: { bg: "bg-gold", ring: "ring-gold", label: "Gold" },
+  2: { bg: "bg-silver", ring: "ring-silver", label: "Silver" },
+  3: { bg: "bg-bronze", ring: "ring-bronze", label: "Bronze" },
+};
+
+function formatScore(n) {
+  const num = Number(n) || 0;
+  return Math.round(num).toLocaleString("en-US");
+}
+
+function gatesPassedCount(gateDetail) {
+  if (!gateDetail) return 0;
+  return GATES.reduce((n, g) => n + (gateDetail[g.key] ? 1 : 0), 0);
+}
+
+// -- Hooks -----------------------------------------------------------------
+
+function usePrevious(value) {
+  const ref = React.useRef(value);
+  React.useEffect(() => {
+    ref.current = value;
+  });
+  return ref.current;
+}
+
+function useCountUp(target, duration = 1500) {
+  const shouldReduceMotion = useReducedMotion();
+  const [display, setDisplay] = React.useState(0);
+  const fromRef = React.useRef(0);
+  const rafRef = React.useRef(null);
+
+  React.useEffect(() => {
+    const from = fromRef.current;
+    const to = Number(target) || 0;
+    if (from === to) return;
+
+    if (shouldReduceMotion) {
+      setDisplay(to);
+      fromRef.current = to;
+      return;
+    }
+
+    const start = performance.now();
+    function tick(now) {
+      const t = Math.min((now - start) / duration, 1);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setDisplay(Math.round(from + (to - from) * eased));
+      if (t < 1) {
+        rafRef.current = requestAnimationFrame(tick);
+      } else {
+        fromRef.current = to;
+      }
+    }
+    rafRef.current = requestAnimationFrame(tick);
+    return () => rafRef.current && cancelAnimationFrame(rafRef.current);
+    // eslint-disable-next-line
+  }, [target, duration, shouldReduceMotion]);
+
+  return display;
+}
+
+function useLeaderboardData() {
+  const [rows, setRows] = React.useState(null); // null = still loading
+  const [error, setError] = React.useState(null);
+  const [connected, setConnected] = React.useState(false);
+  const debounceRef = React.useRef(null);
+
+  const fetchRows = React.useCallback(async () => {
+    const { data, error: err } = await supabase
+      .from("leaderboard")
+      .select("*")
+      .order("rank", { ascending: true });
+    if (err) {
+      setError(err.message);
+      return;
+    }
+    setError(null);
+    setRows(data ?? []);
+  }, []);
+
+  React.useEffect(() => {
+    fetchRows();
+
+    const channel = supabase
+      .channel("leaderboard-live")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "leaderboard" },
+        () => {
+          // Stage 3 replaces the whole table on every scoring run (delete
+          // then insert), so a run fires a burst of change events. Debounce
+          // to one refetch, satisfying the "max 1 re-render/sec" budget.
+          clearTimeout(debounceRef.current);
+          debounceRef.current = setTimeout(fetchRows, 600);
+        }
+      )
+      .subscribe((status) => setConnected(status === "SUBSCRIBED"));
+
+    return () => {
+      clearTimeout(debounceRef.current);
+      supabase.removeChannel(channel);
+    };
+  }, [fetchRows]);
+
+  return { rows, error, connected };
+}
+
+// -- Header ------------------------------------------------------------
+
+function LiveBadge({ connected }) {
+  const shouldReduceMotion = useReducedMotion();
+  return (
+    <div
+      className="absolute top-4 right-4 flex items-center gap-1.5"
+      role="status"
+      aria-label={connected ? "Live updates connected" : "Connecting to live updates"}
+    >
+      <span
+        className={
+          "inline-block h-2 w-2 rounded-full " +
+          (connected ? "bg-success" : "bg-inkMuted") +
+          (connected && !shouldReduceMotion ? " live-dot" : "")
+        }
+      />
+      <span className="text-[11px] font-medium text-inkMuted tracking-wide uppercase">
+        {connected ? "Live update" : "Connecting…"}
+      </span>
+    </div>
+  );
+}
+
+function Header({ connected }) {
+  return (
+    <header className="relative w-full bg-surface border-b border-hairline py-8 px-4 md:py-12 md:px-8">
+      <LiveBadge connected={connected} />
+      <div className="max-w-2xl mx-auto text-center">
+        <h1 className="flex items-center justify-center gap-2 font-extrabold text-ink text-[clamp(28px,8vw,40px)] leading-tight">
+          <Trophy weight="fill" className="text-accent shrink-0" size={36} aria-hidden="true" />
+          Chitauri Leaderboard
+        </h1>
+        <p className="mt-2 text-sm text-inkMuted">
+          20 heroes. 5 gates. One mothership to save the city.
+        </p>
+      </div>
+    </header>
+  );
+}
+
+// -- Podium ------------------------------------------------------------
+
+// Riser (pedestal) heights only -- keeps the 200:165:140 ratio from
+// LEADERBOARD.md §3.1 without the card content above it having to fit
+// inside a fixed 140-200px box (medal + name + score + 5 gates + player
+// name genuinely needs more room than that).
+const podiumHeight = {
+  1: "h-[36px] sm:h-[60px] md:h-[90px]",
+  2: "h-[28px] sm:h-[48px] md:h-[70px]",
+  3: "h-[22px] sm:h-[38px] md:h-[55px]",
+};
+const podiumLift = { 1: "-mt-3 md:-mt-5", 2: "", 3: "" };
+const podiumOrder = { 1: "order-2", 2: "order-1", 3: "order-3" };
+
+const GateRow = React.memo(function GateRow({ gate, passed, index }) {
+  return (
+    <motion.li
+      className="flex items-center gap-1.5 text-xs text-inkMuted"
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.6 + index * 0.15, duration: 0.25 }}
+    >
+      {passed ? (
+        <CheckCircle weight="fill" size={14} className="text-success shrink-0" aria-hidden="true" />
+      ) : (
+        <XCircle weight="fill" size={14} className="text-danger shrink-0" aria-hidden="true" />
+      )}
+      <span className={passed ? "" : "text-inkMuted/70"}>{gate.short}</span>
+    </motion.li>
+  );
+});
+
+const PodiumCard = React.memo(function PodiumCard({ row, place, index }) {
+  const shouldReduceMotion = useReducedMotion();
+  const medalControls = useAnimationControls();
+  const score = useCountUp(row.total_score, 1500);
+  const passed = gatesPassedCount(row.gate_detail);
+  const medal = MEDAL[place];
+
+  React.useEffect(() => {
+    if (shouldReduceMotion) return;
+    let cancelled = false;
+    (async () => {
+      await medalControls.start({ rotate: 360, transition: { duration: 0.9, delay: index * 0.1 + 0.2 } });
+      if (cancelled) return;
+      medalControls.start({
+        rotate: [0, -10, 10, -5, 5, 0],
+        transition: { duration: 0.7, repeat: Infinity, repeatDelay: 2.3, ease: "easeInOut" },
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line
+  }, [shouldReduceMotion]);
+
+  return (
+    <motion.div
+      className={`${podiumOrder[place]} ${podiumLift[place]} flex flex-col items-center w-[110px] sm:w-[140px] md:w-[160px]`}
+      initial={{ y: 80, opacity: 0 }}
+      animate={{ y: 0, opacity: 1 }}
+      transition={{ type: "spring", stiffness: 100, damping: 20, delay: index * 0.1 }}
+      layout
+      layoutId={`podium-${row.id}`}
+    >
+      <div
+        className="w-full rounded-xl shadow-lg border border-hairline bg-surfaceMuted p-3 md:p-6 flex flex-col items-center text-center relative"
+        role="group"
+        aria-label={`Rank ${place}: ${row.hero_name} by ${row.player_name}, score ${formatScore(row.total_score)}`}
+      >
+        <motion.div
+          animate={medalControls}
+          initial={{ rotate: shouldReduceMotion ? 0 : -360 }}
+          className={`h-[44px] w-[44px] md:h-[60px] md:w-[60px] rounded-full ${medal.bg} ring-4 ${medal.ring}/40 flex items-center justify-center shadow-md -mt-8 md:-mt-12`}
+        >
+          <Medal weight="fill" size={22} className="text-ink/70 md:hidden" aria-hidden="true" />
+          <Medal weight="fill" size={30} className="text-ink/70 hidden md:block" aria-hidden="true" />
+        </motion.div>
+
+        <p className="mt-2 md:mt-3 font-bold text-ink text-sm md:text-xl leading-tight line-clamp-2">
+          {row.hero_name}
+        </p>
+
+        <p className="mt-1 font-semibold text-accent text-xs md:text-base tabular-nums">
+          Score: {formatScore(score)}
+        </p>
+
+        <p className="mt-1 text-[11px] md:text-xs font-semibold text-ink">
+          Gates: {passed}/5
+        </p>
+        {/* Full gate breakdown: kept off small screens ("winner's circle,
+            small and tight" per LEADERBOARD.md §8) so 3 cards fit without
+            overlap; the Gates: X/5 line above still carries the info. */}
+        <ul className="hidden sm:block mt-1.5 space-y-1 w-full">
+          {GATES.map((g, i) => (
+            <GateRow key={g.key} gate={g} passed={!!(row.gate_detail && row.gate_detail[g.key])} index={i} />
+          ))}
+        </ul>
+
+        <p className="mt-2 md:mt-3 text-[10px] md:text-[11px] text-inkMuted truncate w-full">
+          Player: {row.player_name}
+        </p>
+      </div>
+
+      <div
+        className={`${podiumHeight[place]} w-[70%] rounded-b-lg ${medal.bg}/70 border-x border-b border-hairline flex items-start justify-center pt-1.5 shadow-sm`}
+        aria-hidden="true"
+      >
+        <span className="font-extrabold text-ink/50 text-lg md:text-2xl">{place}</span>
+      </div>
+    </motion.div>
+  );
+});
+
+function PodiumSection({ top3 }) {
+  return (
+    <section
+      aria-label="Top 3 heroes"
+      className="flex items-end justify-center gap-2 sm:gap-4 md:gap-6 px-4 pt-10 pb-6 md:pt-16 md:pb-10"
+    >
+      {top3.map((row, i) => (
+        <PodiumCard key={row.id} row={row} place={row.rank} index={i} />
+      ))}
+    </section>
+  );
+}
+
+// -- Leaderboard list ------------------------------------------------------
+
+const GateIcons = React.memo(function GateIcons({ gateDetail }) {
+  return (
+    <span className="inline-flex items-center gap-0.5" aria-hidden="true">
+      {GATES.map((g) => {
+        const passed = !!(gateDetail && gateDetail[g.key]);
+        return passed ? (
+          <CheckCircle key={g.key} weight="fill" size={16} className="text-success" />
+        ) : (
+          <XCircle key={g.key} weight="fill" size={16} className="text-danger" />
+        );
+      })}
+    </span>
+  );
+});
+
+const ListRow = React.memo(function ListRow({ row }) {
+  const shouldReduceMotion = useReducedMotion();
+  const prevRank = usePrevious(row.rank);
+  const rankControls = useAnimationControls();
+  const score = useCountUp(row.total_score, 1200);
+  const passed = gatesPassedCount(row.gate_detail);
+
+  const [pulsing, setPulsing] = React.useState(true);
+  React.useEffect(() => {
+    const t = setTimeout(() => setPulsing(false), 5000);
+    return () => clearTimeout(t);
+  }, [row.total_score]);
+
+  React.useEffect(() => {
+    if (prevRank !== undefined && prevRank !== row.rank && !shouldReduceMotion) {
+      rankControls.start({ scale: [0.8, 1.1, 1], transition: { duration: 0.6, ease: "easeOut" } });
+    }
+    // eslint-disable-next-line
+  }, [row.rank]);
+
+  return (
+    <motion.div
+      layout
+      layoutId={`row-${row.id}`}
+      variants={{
+        hidden: { opacity: 0, x: -20 },
+        visible: { opacity: 1, x: 0, transition: { duration: 0.4, ease: "easeOut" } },
+      }}
+      transition={{ layout: { duration: 0.5, ease: "easeInOut" } }}
+      tabIndex={0}
+      role="row"
+      aria-label={`Rank ${row.rank}: ${row.hero_name} by ${row.player_name}, score ${formatScore(row.total_score)}, ${passed} of 5 gates passed`}
+      className="group border-b border-hairline bg-surface hover:bg-[#F9FAFB] transition-colors duration-100 p-3 md:p-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent
+                 grid grid-cols-[40px_1fr_auto] gap-x-3 gap-y-1 md:grid-cols-[40px_1.5fr_1fr_100px_140px] md:items-center"
+    >
+      <motion.span
+        animate={rankControls}
+        role="cell"
+        className="font-bold text-ink text-lg md:text-[18px] tabular-nums"
+      >
+        #{row.rank}
+      </motion.span>
+
+      <span role="cell" className="font-bold text-ink text-base truncate">
+        {row.hero_name}
+      </span>
+
+      <span role="cell" className="text-sm text-inkMuted md:hidden justify-self-end">
+        {row.player_name}
+      </span>
+      <span role="cell" className="hidden md:block text-sm text-inkMuted truncate">
+        {row.player_name}
+      </span>
+
+      <span
+        role="cell"
+        className={
+          "hidden md:block font-bold text-lg tabular-nums text-accent group-hover:text-accentDark " +
+          (pulsing && !shouldReduceMotion ? "score-pulsing" : "")
+        }
+      >
+        {formatScore(score)}
+      </span>
+
+      <span role="cell" className="hidden md:flex items-center gap-2">
+        <GateIcons gateDetail={row.gate_detail} />
+        <span className="text-xs text-inkMuted">{passed}/5</span>
+      </span>
+
+      <div className="col-span-3 flex items-center justify-between md:hidden mt-0.5">
+        <span
+          className={
+            "font-bold text-base tabular-nums text-accent " +
+            (pulsing && !shouldReduceMotion ? "score-pulsing" : "")
+          }
+        >
+          Score: {formatScore(score)}
+        </span>
+        <span className="flex items-center gap-2">
+          <GateIcons gateDetail={row.gate_detail} />
+          <span className="text-xs text-inkMuted">{passed}/5</span>
+        </span>
+      </div>
+    </motion.div>
+  );
+});
+
+function LeaderboardList({ rows }) {
+  return (
+    <section aria-label="Leaderboard, ranks 4 and below" className="max-w-4xl mx-auto px-4 pb-16">
+      <div
+        role="table"
+        aria-label="Full leaderboard"
+        className="rounded-xl border border-hairline overflow-hidden shadow-sm bg-surface"
+      >
+        <div
+          role="row"
+          className="hidden md:grid grid-cols-[40px_1.5fr_1fr_100px_140px] gap-x-3 p-4 bg-surfaceMuted border-b border-hairline text-xs font-semibold text-inkMuted uppercase tracking-wide"
+        >
+          <span role="columnheader">#</span>
+          <span role="columnheader">Hero</span>
+          <span role="columnheader">Player</span>
+          <span role="columnheader">Score</span>
+          <span role="columnheader">Gates</span>
+        </div>
+        <motion.div
+          initial="hidden"
+          animate="visible"
+          variants={{ visible: { transition: { staggerChildren: 0.08 } } }}
+        >
+          <AnimatePresence initial={false}>
+            {rows.map((row) => (
+              <ListRow key={row.id} row={row} />
+            ))}
+          </AnimatePresence>
+        </motion.div>
+      </div>
+    </section>
+  );
+}
+
+// -- Loading / empty / error states -----------------------------------
+
+function PodiumSkeleton() {
+  return (
+    <div className="flex items-end justify-center gap-3 sm:gap-4 md:gap-6 px-4 pt-10 pb-6 md:pt-16 md:pb-10">
+      {[2, 1, 3].map((place) => (
+        <div
+          key={place}
+          className={`${podiumHeight[place]} ${podiumOrder[place]} w-[140px] sm:w-[150px] md:w-[160px] rounded-xl border border-hairline p-6 flex flex-col items-center`}
+        >
+          <div className="h-[60px] w-[60px] rounded-full skeleton -mt-10 md:-mt-12" />
+          <div className="mt-4 h-4 w-20 rounded skeleton" />
+          <div className="mt-3 h-3 w-16 rounded skeleton" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ListSkeleton() {
+  return (
+    <div className="max-w-4xl mx-auto px-4 pb-16">
+      <div className="rounded-xl border border-hairline overflow-hidden shadow-sm">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div key={i} className="p-4 border-b border-hairline last:border-b-0 flex items-center gap-4">
+            <div className="h-5 w-6 rounded skeleton" />
+            <div className="h-4 flex-1 rounded skeleton" />
+            <div className="h-4 w-16 rounded skeleton hidden md:block" />
+            <div className="h-4 w-20 rounded skeleton" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function EmptyState() {
+  return (
+    <div className="py-16 px-4 text-center max-w-md mx-auto">
+      <Rocket weight="fill" size={40} className="text-accent mx-auto mb-3" aria-hidden="true" />
+      <p className="font-bold text-xl text-ink">No heroes yet. Be the first!</p>
+      <p className="mt-2 text-sm text-inkMuted">
+        Leaderboard updates live as scores are tallied. Check back soon.
+      </p>
+    </div>
+  );
+}
+
+function ErrorState({ message }) {
+  return (
+    <div className="py-16 px-4 text-center max-w-md mx-auto">
+      <WarningCircle weight="fill" size={40} className="text-danger mx-auto mb-3" aria-hidden="true" />
+      <p className="font-bold text-xl text-ink">Couldn't load the leaderboard</p>
+      <p className="mt-2 text-sm text-inkMuted">{message}</p>
+    </div>
+  );
+}
+
+// -- Confetti (rank-1 change only) --------------------------------------
+
+function ConfettiBurst({ triggerKey }) {
+  const shouldReduceMotion = useReducedMotion();
+  const pieces = React.useMemo(() => {
+    if (shouldReduceMotion || !triggerKey) return [];
+    const colors = ["#E23636", "#1560D4", "#FCD34D", "#10B981", "#C7D2FE"];
+    return Array.from({ length: 28 }).map((_, i) => ({
+      id: i,
+      left: Math.random() * 100,
+      color: colors[i % colors.length],
+      duration: 2 + Math.random() * 1.2,
+      delay: Math.random() * 0.3,
+      size: 6 + Math.random() * 5,
+    }));
+    // eslint-disable-next-line
+  }, [triggerKey, shouldReduceMotion]);
+
+  if (!pieces.length) return null;
+
+  return (
+    <div className="pointer-events-none fixed inset-0 z-50 overflow-hidden" aria-hidden="true">
+      {pieces.map((p) => (
+        <span
+          key={p.id}
+          className="confetti-piece absolute top-0 rounded-sm"
+          style={{
+            left: `${p.left}%`,
+            width: p.size,
+            height: p.size,
+            backgroundColor: p.color,
+            animationDuration: `${p.duration}s`,
+            animationDelay: `${p.delay}s`,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+// -- App -----------------------------------------------------------------
+
+function App() {
+  const { rows, error, connected } = useLeaderboardData();
+  const [confettiKey, setConfettiKey] = React.useState(null);
+  const prevFirstIdRef = React.useRef(null);
+
+  React.useEffect(() => {
+    if (!rows || rows.length === 0) return;
+    const firstId = rows[0].id;
+    if (prevFirstIdRef.current && prevFirstIdRef.current !== firstId) {
+      setConfettiKey(`${firstId}-${Date.now()}`);
+    }
+    prevFirstIdRef.current = firstId;
+  }, [rows]);
+
+  const top3 = rows ? rows.filter((r) => r.rank <= 3).sort((a, b) => a.rank - b.rank) : [];
+  const rest = rows ? rows.filter((r) => r.rank > 3) : [];
+
+  return (
+    <div className="min-h-screen bg-surface">
+      <Header connected={connected} />
+
+      {error ? (
+        <ErrorState message={error} />
+      ) : rows === null ? (
+        <>
+          <PodiumSkeleton />
+          <ListSkeleton />
+        </>
+      ) : rows.length === 0 ? (
+        <EmptyState />
+      ) : (
+        <>
+          <PodiumSection top3={top3} />
+          {rest.length > 0 && <LeaderboardList rows={rest} />}
+        </>
+      )}
+
+      <ConfettiBurst triggerKey={confettiKey} />
+    </div>
+  );
+}
+
+createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
